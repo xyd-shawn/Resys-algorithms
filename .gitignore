@@ -1,0 +1,8 @@
+# vim
+*.~
+
+# python
+models/__pycache__/
+
+# pycharm
+.idea/
