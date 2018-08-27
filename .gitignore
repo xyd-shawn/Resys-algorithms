@@ -6,3 +6,10 @@ models/__pycache__/
 
 # pycharm
 .idea/
+
+# directory
+logs/
+tmp/
+results/
+data/
+
