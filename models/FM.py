@@ -40,8 +40,8 @@ class FM(object):
 
         self.graph = tf.Graph()
         with self.graph.as_default():
-            tf.set_random_seed(self.random_seed)        # 设置随机种子
-
+            tf.set_random_seed(self.random_seed)        # set random seed
+            # input data
             self.labels = tf.placeholder(tf.float32, shape=[None, 1], name='labels')
 
             # compute the linear part and the interaction part of fm respectively

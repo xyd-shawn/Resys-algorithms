@@ -1,6 +1,6 @@
 """
-Simply implement FFM for CTR prediction
-paper: https://www.csie.ntu.edu.tw/~cjlin/papers/ffm.pdf
+Simply implement FNN for CTR prediction
+paper: https://arxiv.org/pdf/1601.02376.pdf
 """
 
 import os
@@ -14,18 +14,19 @@ from tensorflow.contrib.layers import l2_regularizer
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 
 
-class FFM(object):
-    def __init__(self, n_features, n_fields, feature_field, **config):
-        self.n_features = n_features
-        self.n_fields = n_fields
-        self.feature_field = feature_field
-        self.factor_dim = config.get('factor_dim', 8)
+class FNN(object):
+    def __init__(self, n_features_list, **config):
+        self.n_features_list = n_features_list
+        self.n_features_total = sum(n_features_list)
+        self.n_fields = len(self.n_features_list)
+        self.embedding_dim = config.get('embedding_dim', 8)
         self.batch_size = config.get('batch_size', 32)
+        self.hidden_units = config.get('hidden_units', [200, 200])
         self.norm_coef = config.get('norm_coef', 0.0)
         self.optimizer_type = config.get('optimizer_type', 'sgd')
         self.lr = config.get('learning_rate', 0.01)
         self.momentum = config.get('momentum', 0.9)
-        self.save_path = config.get('save_path', '../logs/FFM/')
+        self.save_path = config.get('save_path', '../logs/FNN/')
         self.random_seed = config.get('random_seed', 1)
         self._build_model()
 
@@ -34,30 +35,52 @@ class FFM(object):
         with self.graph.as_default():
             tf.set_random_seed(self.random_seed)        # set random seed
             # input data
-            self.features = tf.placeholder(tf.float32, shape=[None, self.n_features], name='input_feature')
+            self.features = tf.placeholder(tf.int32, shape=[None, self.n_features_total], name='input_features')
             self.labels = tf.placeholder(tf.float32, shape=[None, 1], name='labels')
+            self.dropout_keep = tf.placeholder(tf.float32, name='keep_prob')
 
-            # compute FFM
-            # linear part
-            self.b = tf.Variable(tf.constant(0.0), name='bias')
-            self.w = tf.Variable(tf.truncated_normal(shape=[self.n_features, 1], mean=0.0, stddev=0.1),
-                                 name='feature_weights')
-            self.linear_part = tf.add(tf.sparse_tensor_dense_matmul(self.features, self.w),
-                                      self.b * tf.ones_like(self.labels))
-            # interaction part
-            self.v = tf.Variable(tf.truncated_normal(shape=[self.n_features, self.n_fields, self.factor_dim], mean=0.0, stddev=0.1),
-                                 name='feature_interaction')
-            self.interact_part = tf.constant(0.0)
-            for i in range(self.n_features):
-                for j in range(i + 1, self.n_features):
-                    self.interact_part += tf.multiply(tf.reduce_sum(tf.multiply(self.v[i, self.feature_field[j]], self.v[j, self.feature_field[i]])),
-                                                      tf.multiply(self.features[:, i], self.features[:, j]))
-            self.ffm = tf.add(self.linear_part, self.interact_part)
+            # split the input according to field information
+            self.field_values = tf.split(self.features, num_or_size_splits=self.n_features_list, axis=1)
+
+            # the first embedding layer
+            with tf.variable_scope('embedding_layer'):
+                self.b0 = tf.Variable(tf.constant(0.0), name='bias_0')
+                self.W0 = dict()
+                l1 = self.b0 * tf.ones_like(self.labels)
+                for i in range(self.n_fields):
+                    self.W0[i] = tf.Variable(
+                        tf.truncated_normal(shape=[self.n_features_list[i], self.embedding_dim], mean=0.0, stddev=0.1),
+                        name='embedding_%d' % i)
+                    l1 = tf.concat([l1, tf.sparse_tensor_dense_matmul(self.field_values[i], self.W0[i])], axis=1)
+                self.layer1 = l1  # [None, n_fields * embedding_dim + 1]
+                self.layer1 = tf.nn.dropout(self.layer1, keep_prob=self.dropout_keep)
+
+            # the second layer, which is the first fully connected layer
+            with tf.variable_scope('fc_layer_1'):
+                self.b1 = tf.Variable(tf.constant(0.0, shape=[1, self.hidden_units[0]]), name='bias_1')
+                self.W1 = tf.Variable(tf.truncated_normal(shape=[self.n_fields * self.embedding_dim + 1, self.hidden_units[0]], mean=0.0, stddev=0.1),
+                                      name='W_1')
+                self.layer2 = tf.nn.relu(tf.matmul(self.layer1, self.W1) + self.b1)
+
+            # the third layer, which is the second fully connected layer
+            with tf.variable_scope('fc_layer_2'):
+                self.b2 = tf.Variable(tf.constant(0.0, shape=[1, self.hidden_units[1]]), name='bias_2')
+                self.W2 = tf.Variable(tf.truncated_normal(shape=[self.hidden_units[0], self.hidden_units[1]], mean=0.0, stddev=0.1),
+                                      name='W_2')
+                self.layer3 = tf.nn.relu(tf.matmul(self.layer2, self.W2) + self.b2)
+
+            # the last layer, which is the output layer
+            with tf.variable_scope('out_layer'):
+                self.b3 = tf.Variable(tf.constant(0.0, shape=[1, 1]), name='bias_3')
+                self.W3 = tf.Variable(tf.truncated_normal(shape=[self.hidden_units[1], 1], mean=0.0, stddev=0.1),
+                                      name='W_3')
+                self.fnn = tf.matmul(self.layer3, self.W3) + self.b3
 
             # compute loss and accuracy
-            self.predictions = tf.sigmoid(self.ffm)
-            self.loss_f = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=self.labels, logits=self.ffm))
-            self.loss = self.loss_f + l2_regularizer(self.norm_coef)(self.w) + l2_regularizer(self.norm_coef)(self.v)
+            self.predictions = tf.sigmoid(self.fnn)
+            self.loss_f = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=self.labels, logits=self.fnn))
+            total_vars = tf.trainable_variables()
+            self.loss = self.loss_f + tf.add_n([l2_regularizer(self.norm_coef)(v) for v in total_vars])
             self.correct = tf.equal(tf.cast(tf.greater(self.predictions, 0.5), tf.float32), self.labels)
             self.accuracy = tf.reduce_mean(tf.cast(self.correct, tf.float32))
 
