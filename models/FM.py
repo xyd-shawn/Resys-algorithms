@@ -9,6 +9,7 @@ import copy
 import numpy as np
 import tensorflow as tf
 from tqdm import tqdm
+from tensorflow.contrib.layers import l2_regularizer
 
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 
@@ -26,8 +27,8 @@ class FM(object):
             if not n_features == feature_size:
                 print('Error! feature_size should equal to n_features')
         self.factor_dim = config.get('factor_dim', 16)
+        self.norm_coef = config.get('norm_coef', 0.0)
         self.batch_size = config.get('batch_size', 32)
-        self.n_epochs = config.get('n_epochs', 100)
         self.optimizer_type = config.get('optimizer_type', 'sgd')
         self.lr = config.get('learning_rate', 0.01)
         self.momentum = config.get('momentum', 0.9)
@@ -70,12 +71,13 @@ class FM(object):
             # compute loss and accuracy
             if self.task_type == 'pred_CTR':
                 self.predictions = tf.sigmoid(self.fm)
-                self.loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=self.labels, logits=self.fm))
+                self.loss_f = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=self.labels, logits=self.fm))
                 self.correct = tf.equal(tf.cast(tf.greater(self.predictions, 0.5), tf.float32), self.labels)
                 self.accuracy = tf.reduce_mean(tf.cast(self.correct, tf.float32))
             else:
                 self.predictions = self.fm
-                self.loss = tf.nn.l2_loss(tf.subtract(self.predictions, self.labels))
+                self.loss_f = tf.nn.l2_loss(tf.subtract(self.predictions, self.labels))
+            self.loss = self.loss_f + l2_regularizer(self.norm_coef)(self.w) + l2_regularizer(self.norm_coef)(self.v)
 
             # build optimizer
             if self.optimizer_type.lower() == 'sgd':
