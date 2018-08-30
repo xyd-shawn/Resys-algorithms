@@ -4,6 +4,7 @@ paper: https://arxiv.org/pdf/1601.02376.pdf
 """
 
 import os
+import sys
 import copy
 
 import numpy as np
@@ -27,6 +28,7 @@ class FNN(object):
         self.lr = config.get('learning_rate', 0.01)
         self.momentum = config.get('momentum', 0.9)
         self.save_path = config.get('save_path', '../logs/FNN/')
+        self.fm_params_path = config.get('fm_params_path', '../tmp/FM/')
         self.random_seed = config.get('random_seed', 1)
         self._build_model()
 
@@ -43,14 +45,13 @@ class FNN(object):
             self.field_values = tf.split(self.features, num_or_size_splits=self.n_features_list, axis=1)
 
             # the first embedding layer
+            pretrain_fm_weights = self._process_fm_params()
             with tf.variable_scope('embedding_layer'):
                 self.b0 = tf.Variable(tf.constant(0.0), name='bias_0')
                 self.W0 = dict()
                 l1 = self.b0 * tf.ones_like(self.labels)
                 for i in range(self.n_fields):
-                    self.W0[i] = tf.Variable(
-                        tf.truncated_normal(shape=[self.n_features_list[i], self.embedding_dim], mean=0.0, stddev=0.1),
-                        name='embedding_%d' % i)
+                    self.W0[i] = tf.Variable(pretrain_fm_weights[i], name='embedding_%d' % i)
                     l1 = tf.concat([l1, tf.sparse_tensor_dense_matmul(self.field_values[i], self.W0[i])], axis=1)
                 self.layer1 = l1  # [None, n_fields * embedding_dim + 1]
                 self.layer1 = tf.nn.dropout(self.layer1, keep_prob=self.dropout_keep)
@@ -101,6 +102,23 @@ class FNN(object):
             self.saver = tf.train.Saver()
             init = tf.global_variables_initializer()
             self.sess.run(init)
+
+    def _process_fm_params(self):
+        fm_weights = np.load(self.fm_params_path + 'fm_weights.npy')
+        fm_interaction = np.load(self.fm_params_path + 'fm_interaction.npy')
+        factor_dim = fm_interaction.shape[1]
+        if not (factor_dim + 1) == self.embedding_dim:
+            print('Error, the embedding dim should equal to factor dim plus one!')
+            sys.exit(0)
+        n_features_list = copy.deepcopy(self.n_features_list)
+        n_features_list.insert(0, 0)
+        cum_features_list = np.cumsum(n_features_list, dtype=int)
+        pretrain_fm_weights = dict()
+        for i in range(self.n_fields):
+            pretrain_fm_weights[i] = np.zeros((n_features_list[i], self.embedding_dim))
+            pretrain_fm_weights[i][:, 0] = fm_weights[cum_features_list[i]:cum_features_list[i + 1], :]
+            pretrain_fm_weights[i][:, 1:] = fm_interaction[cum_features_list[i]:cum_features_list[i + 1], :]
+        return pretrain_fm_weights
 
     def load_pretrain_weights(self):
         self.saver.restore(self.sess, self.save_path)

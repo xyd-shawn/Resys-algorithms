@@ -4,6 +4,7 @@ paper: https://www.csie.ntu.edu.tw/~b97053/paper/Rendle2010FM.pdf
 """
 
 import os
+import sys
 import copy
 
 import numpy as np
@@ -15,17 +16,20 @@ os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 
 
 class FM(object):
-    def __init__(self, feature_type='mixed', task_type='pred_CTR', n_features=10, feature_size=None, **config):
+    def __init__(self, feature_type='mixed', task_type='pred_CTR', n_features=10, feature_size=None, use_pretrain=False, **config):
         self.feature_type = feature_type
         self.task_type = task_type
         self.n_features = n_features
         self.feature_size = feature_size
         if self.feature_type in ['discrete', 'categorical']:
             if not self.feature_size:
-                print('Error! feature_size should be the maximum value of features')
+                print('Error, feature_size should be the maximum value of features!')
+                sys.exit(0)
         else:
             if not n_features == feature_size:
-                print('Error! feature_size should equal to n_features')
+                print('Error, feature_size should equal to n_features!')
+                sys.exit(0)
+        self.use_pretrain = use_pretrain
         self.factor_dim = config.get('factor_dim', 16)
         self.norm_coef = config.get('norm_coef', 0.0)
         self.batch_size = config.get('batch_size', 32)
@@ -34,10 +38,11 @@ class FM(object):
         self.momentum = config.get('momentum', 0.9)
         self.random_seed = config.get('random_seed', 1)
         self.save_path = config.get('save_path', '../logs/FM/')
+        self.fm_save_path = config.get('fm_save_path', '../tmp/FM/')
+        self.fm_load_path = config.get('fm_load_path', '../tmp/FM/')
         self._build_model()
 
     def _build_model(self):
-
         self.graph = tf.Graph()
         with self.graph.as_default():
             tf.set_random_seed(self.random_seed)        # set random seed
@@ -45,11 +50,17 @@ class FM(object):
             self.labels = tf.placeholder(tf.float32, shape=[None, 1], name='labels')
 
             # compute the linear part and the interaction part of fm respectively
-            self.b = tf.Variable(tf.constant(0.0), name='bias')
-            self.w = tf.Variable(tf.truncated_normal(shape=[self.feature_size, 1], mean=0.0, stddev=0.1),
-                                 name='feature_weights')
-            self.v = tf.Variable(tf.truncated_normal(shape=[self.feature_size, self.factor_dim], mean=0.0, stddev=0.1),
-                                 name='feature_interaction')
+            if self.use_pretrain:        # use pretrain weights
+                fm_bias, fm_weights, fm_interaction = self.load_weights_from_npy()
+                self.b = tf.Variable(fm_bias, name='bias')
+                self.w = tf.Variable(fm_weights, name='feature_weights')
+                self.v = tf.Variable(fm_interaction, name='feature_interaction')
+            else:
+                self.b = tf.Variable(tf.constant(0.0), name='bias')
+                self.w = tf.Variable(tf.truncated_normal(shape=[self.feature_size, 1], mean=0.0, stddev=0.1),
+                                     name='feature_weights')
+                self.v = tf.Variable(tf.truncated_normal(shape=[self.feature_size, self.factor_dim], mean=0.0, stddev=0.1),
+                                     name='feature_interaction')
             if self.feature_type in ['discrete', 'categorical']:
                 self.features = tf.placeholder(tf.int32, shape=[None, self.n_features], name='input_features')
                 self.linear_embedding = tf.nn.embedding_lookup(self.w, self.features)
@@ -100,7 +111,20 @@ class FM(object):
     def load_pretrain_weights(self):
         self.saver.restore(self.sess, self.save_path)
 
-    def fit(self, X, y, n_epochs):
+    def load_weights_from_npy(self):
+        fm_bias = np.load(self.fm_load_path + 'fm_bias.npy')
+        fm_weights = np.load(self.fm_load_path + 'fm_weights.npy')
+        fm_interaction = np.load(self.fm_load_path + 'fm_interaction.npy')
+        return fm_bias, fm_weights, fm_interaction
+
+    def save_weights_to_npy(self):
+        fm_bias, fm_weights, fm_interaction = self.sess.run([self.b, self.w, self.v])
+        np.save(self.fm_save_path + 'fm_bias.npy', fm_bias)
+        np.save(self.fm_save_path + 'fm_weights.npy', fm_weights)
+        np.save(self.fm_save_path + 'fm_interaction.npy', fm_interaction)
+        print('finish saving model weights')
+
+    def fit(self, X, y, n_epochs, need_save_weights=False):
         train_X = copy.deepcopy(X)
         sz = train_X.shape[0]
         n_batches = sz // self.batch_size
@@ -121,6 +145,8 @@ class FM(object):
             train_loss_list.append(epoch_loss)
             if epoch % 1000 == 0:
                 self.saver.save(self.sess, self.save_path, global_step=epoch)
+        if need_save_weights:
+            self.save_weights_to_npy()
 
     def predict(self, X):
         test_X = copy.deepcopy(X)
