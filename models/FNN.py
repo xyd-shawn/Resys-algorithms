@@ -30,6 +30,7 @@ class FNN(object):
         self.save_path = config.get('save_path', '../logs/FNN/')
         self.fm_params_path = config.get('fm_params_path', '../tmp/FM/')
         self.random_seed = config.get('random_seed', 1)
+        self.keep_prob = config.get('keep_prob', 0.5)
         self._build_model()
 
     def _build_model(self):
@@ -137,7 +138,9 @@ class FNN(object):
                 X_batch = X_train[(i * self.batch_size):((i + 1) * self.batch_size)]
                 y_batch = y_train[(i * self.batch_size):((i + 1) * self.batch_size)]
                 train_loss, _ = self.sess.run([self.loss, self.optimizer.minimize(self.loss)],
-                                              feed_dict={self.features: X_batch, self.labels: y_batch})
+                                              feed_dict={self.features: X_batch,
+                                                         self.labels: y_batch,
+                                                         self.dropout_keep: self.keep_prob})
                 epoch_loss_list.append(train_loss)
             epoch_loss = np.mean(epoch_loss_list)[0]
             print('>>> Epoch %d: loss %f' % (epoch, epoch_loss))
