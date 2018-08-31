@@ -54,7 +54,7 @@ class FNN(object):
                 for i in range(self.n_fields):
                     self.W0[i] = tf.Variable(pretrain_fm_weights[i], name='embedding_%d' % i)
                     l1 = tf.concat([l1, tf.sparse_tensor_dense_matmul(self.field_values[i], self.W0[i])], axis=1)
-                self.layer1 = l1  # [None, n_fields * embedding_dim + 1]
+                self.layer1 = l1        # [None, n_fields * embedding_dim + 1]
                 self.layer1 = tf.nn.dropout(self.layer1, keep_prob=self.dropout_keep)
 
             # the second layer, which is the first fully connected layer
@@ -79,22 +79,24 @@ class FNN(object):
                 self.fnn = tf.matmul(self.layer3, self.W3) + self.b3
 
             # compute loss and accuracy
-            self.predictions = tf.sigmoid(self.fnn)
-            self.loss_f = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=self.labels, logits=self.fnn))
-            total_vars = tf.trainable_variables()
-            self.loss = self.loss_f + tf.add_n([l2_regularizer(self.norm_coef)(v) for v in total_vars])
-            self.correct = tf.equal(tf.cast(tf.greater(self.predictions, 0.5), tf.float32), self.labels)
-            self.accuracy = tf.reduce_mean(tf.cast(self.correct, tf.float32))
+            with tf.variable_scope('loss'):
+                self.predictions = tf.sigmoid(self.fnn)
+                self.loss_f = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=self.labels, logits=self.fnn))
+                total_vars = tf.trainable_variables()
+                self.loss = self.loss_f + tf.add_n([l2_regularizer(self.norm_coef)(v) for v in total_vars])
+                self.correct = tf.equal(tf.cast(tf.greater(self.predictions, 0.5), tf.float32), self.labels)
+                self.accuracy = tf.reduce_mean(tf.cast(self.correct, tf.float32))
 
             # build optimizer
-            if self.optimizer_type.lower() == 'sgd':
-                self.optimizer = tf.train.GradientDescentOptimizer(learning_rate=self.lr)
-            elif self.optimizer_type.lower() == 'adam':
-                self.optimizer = tf.train.AdamOptimizer(learning_rate=self.lr)
-            elif self.optimizer_type.lower() == 'rmsprop':
-                self.optimizer = tf.train.RMSPropOptimizer(learning_rate=self.lr, momentum=self.momentum)
-            elif self.optimizer_type.lower() == 'momentum':
-                self.optimizer = tf.train.MomentumOptimizer(learning_rate=self.lr, momentum=self.momentum)
+            with tf.variable_scope('optimizer'):
+                if self.optimizer_type.lower() == 'sgd':
+                    self.optimizer = tf.train.GradientDescentOptimizer(learning_rate=self.lr)
+                elif self.optimizer_type.lower() == 'adam':
+                    self.optimizer = tf.train.AdamOptimizer(learning_rate=self.lr)
+                elif self.optimizer_type.lower() == 'rmsprop':
+                    self.optimizer = tf.train.RMSPropOptimizer(learning_rate=self.lr, momentum=self.momentum)
+                elif self.optimizer_type.lower() == 'momentum':
+                    self.optimizer = tf.train.MomentumOptimizer(learning_rate=self.lr, momentum=self.momentum)
 
             # create session and init
             tf_config = tf.ConfigProto()
