@@ -52,7 +52,7 @@ class PNN(object):
                 for i in range(self.n_fields):
                     self.W0[i] = tf.Variable(tf.truncated_normal(shape=[self.n_features_list[i], self.embedding_dim], mean=0.0, stddev=0.1),
                                              name='embedding_%d' % i)
-                    self.embedding_res[i] = tf.sparse_tensor_dense_matmul(self.field_values[i], self.W0[i])
+                    self.embedding_res[i] = tf.matmul(self.field_values[i], self.W0[i])
 
             # the second layer, which implements inner product or outer product
             with tf.variable_scope('product_layer'):
@@ -65,11 +65,13 @@ class PNN(object):
                 if self.mode == 'inner':
                     self.Wp = tf.Variable(tf.truncated_normal(shape=[self.n_fields, self.hidden_units[0]], mean=0.0, stddev=0.1),
                                           name='W_p')
+                    self.lp_list = []
                     for i in range(self.hidden_units[0]):
                         f_sum = tf.zeros_like(self.embedding_res[0])
                         for j in range(self.n_fields):
                             f_sum += (self.Wp[j, i] * self.embedding_res[j])
-                        self.lp[:, i] = tf.square(tf.norm(f_sum, axis=1))
+                        self.lp_list.append(tf.square(tf.norm(f_sum, axis=1)))
+                    self.lp = tf.stack(self.lp_list, axis=1)
                 else:
                     f_sum = tf.add_n([self.embedding_res[i] for i in range(self.n_fields)])
                     f_sum_transpose = tf.expand_dims(f_sum, axis=1)
@@ -121,6 +123,7 @@ class PNN(object):
                     self.optimizer = tf.train.RMSPropOptimizer(learning_rate=self.lr, momentum=self.momentum)
                 elif self.optimizer_type.lower() == 'momentum':
                     self.optimizer = tf.train.MomentumOptimizer(learning_rate=self.lr, momentum=self.momentum)
+                self.optimizer_loss = self.optimizer.minimize(self.loss)
 
             # create session and init
             tf_config = tf.ConfigProto()
@@ -146,7 +149,7 @@ class PNN(object):
             for i in tqdm(range(n_batches)):
                 X_batch = X_train[(i * self.batch_size):((i + 1) * self.batch_size)]
                 y_batch = y_train[(i * self.batch_size):((i + 1) * self.batch_size)]
-                train_loss, _ = self.sess.run([self.loss, self.optimizer.minimize(self.loss)],
+                train_loss, _ = self.sess.run([self.loss, self.optimizer_loss],
                                               feed_dict={self.features: X_batch,
                                                          self.labels: y_batch,
                                                          self.dropout_keep: self.keep_prob})

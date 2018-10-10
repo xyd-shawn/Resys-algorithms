@@ -97,6 +97,7 @@ class FNN(object):
                     self.optimizer = tf.train.RMSPropOptimizer(learning_rate=self.lr, momentum=self.momentum)
                 elif self.optimizer_type.lower() == 'momentum':
                     self.optimizer = tf.train.MomentumOptimizer(learning_rate=self.lr, momentum=self.momentum)
+                self.optimizer_loss = self.optimizer.minimize(self.loss)
 
             # create session and init
             tf_config = tf.ConfigProto()
@@ -139,7 +140,7 @@ class FNN(object):
             for i in tqdm(range(n_batches)):
                 X_batch = X_train[(i * self.batch_size):((i + 1) * self.batch_size)]
                 y_batch = y_train[(i * self.batch_size):((i + 1) * self.batch_size)]
-                train_loss, _ = self.sess.run([self.loss, self.optimizer.minimize(self.loss)],
+                train_loss, _ = self.sess.run([self.loss, self.optimizer_loss],
                                               feed_dict={self.features: X_batch,
                                                          self.labels: y_batch,
                                                          self.dropout_keep: self.keep_prob})
